@@ -2,13 +2,11 @@
 
 # ==============================================================================
 # .env переменные:
-#   DOMAIN              - доменное имя*
-#   EMAIL               - email для Let's Encrypt
-#   STAGING             - 1 для тестового режима
-#   CF_API_TOKEN        - Cloudflare API Token
-#   DNS_PLUGIN          - имя плагина: dns-cloudflare, dns-route53 и др.
-#   DNS_CREDENTIALS     - путь к credentials внутри контейнера
-#   DNS_PROPAGATION_SEC - время ожидания распространения DNS, сек (по умолч. 60)
+#   DOMAIN         - доменное имя*
+#   EMAIL          - email для Let's Encrypt
+#   STAGING        - 1 для тестового режима
+#   CF_Token       - Cloudflare API Token
+#   CF_Account_ID  - Cloudflare Account ID (опционально)
 # ==============================================================================
 
 set -euo pipefail
@@ -32,21 +30,19 @@ set +a
 
 # --- Параметры ---------------------------------------------------------------
 staging="${STAGING:-0}"
-rsa_key_size=4096
-data_path="./certbot"
+data_path="./acme/data"
+certs_path="./certs"
 domain_name="${DOMAIN:-}"
 email="${EMAIL:-}"
-cf_api_token="${CF_API_TOKEN:-}"
-dns_plugin="${DNS_PLUGIN:-}"
-dns_credentials="${DNS_CREDENTIALS:-}"
-dns_propagation="${DNS_PROPAGATION_SEC:-60}"
+cf_token="${CF_Token:-}"
+cf_account_id="${CF_Account_ID:-}"
 
 if [ -z "$domain_name" ]; then
     echo -e "${RED}❌  Переменная DOMAIN не задана в .env${NC}"
     exit 1
 fi
 
-cert_path="$data_path/conf/live/$domain_name/fullchain.pem"
+cert_path="$certs_path/live/$domain_name/fullchain.pem"
 
 # ==============================================================================
 # Туториал
@@ -81,82 +77,35 @@ print_cloudflare_tutorial() {
 }
 
 # ==============================================================================
-# Настройка Cloudflare credentials
+# Настройка Cloudflare токена
 # ==============================================================================
 setup_cloudflare() {
-    local secrets_dir="./certbot/secrets"
-    local cf_ini="$secrets_dir/cloudflare.ini"
-    local cf_ini_container="/secrets/cloudflare.ini"
-
-    if [ -f "$cf_ini" ] && [ -z "$cf_api_token" ]; then
-        echo -e "${GREEN}✅  Файл credentials Cloudflare уже существует: $cf_ini${NC}"
-        dns_plugin="dns-cloudflare"
-        dns_credentials="$cf_ini_container"
+    if [ -n "$cf_token" ]; then
         return 0
     fi
 
-    if [ -z "$cf_api_token" ]; then
-        print_cloudflare_tutorial
-        while true; do
-            read -rp "$(echo -e "${BOLD}Вставьте Cloudflare API Token:${NC} ")" cf_api_token
-            if [ -n "$cf_api_token" ]; then
-                break
-            fi
-            echo -e "${RED}  Токен не может быть пустым. Попробуйте ещё раз.${NC}"
-        done
-
-        if grep -q "^CF_API_TOKEN=" .env; then
-            sed -i "s|^CF_API_TOKEN=.*|CF_API_TOKEN=$cf_api_token|" .env
-        else
-            echo "" >> .env
-            echo "CF_API_TOKEN=$cf_api_token" >> .env
+    print_cloudflare_tutorial
+    while true; do
+        read -rp "$(echo -e "${BOLD}Вставьте Cloudflare API Token:${NC} ")" cf_token
+        if [ -n "$cf_token" ]; then
+            break
         fi
-        echo -e "${GREEN}  ✓ CF_API_TOKEN сохранён в .env${NC}"
-    fi
+        echo -e "${RED}  Токен не может быть пустым. Попробуйте ещё раз.${NC}"
+    done
 
-    mkdir -p "$secrets_dir"
-    cat > "$cf_ini" <<EOF
-# Cloudflare API Token (Edit zone DNS)
-# Получить: https://dash.cloudflare.com/profile/api-tokens
-dns_cloudflare_api_token = $cf_api_token
-EOF
-    chmod 600 "$cf_ini"
-    echo -e "${GREEN}  ✓ Файл credentials создан: $cf_ini (chmod 600)${NC}"
-
-    if grep -q "^DNS_PLUGIN=" .env; then
-        sed -i "s|^DNS_PLUGIN=.*|DNS_PLUGIN=dns-cloudflare|" .env
+    if grep -q "^CF_Token=" .env; then
+        sed -i "s|^CF_Token=.*|CF_Token=$cf_token|" .env
     else
-        echo "DNS_PLUGIN=dns-cloudflare" >> .env
+        echo "" >> .env
+        echo "CF_Token=$cf_token" >> .env
     fi
-    if grep -q "^DNS_CREDENTIALS=" .env; then
-        sed -i "s|^DNS_CREDENTIALS=.*|DNS_CREDENTIALS=$cf_ini_container|" .env
-    else
-        echo "DNS_CREDENTIALS=$cf_ini_container" >> .env
-    fi
-    echo -e "${GREEN}  ✓ DNS_PLUGIN и DNS_CREDENTIALS обновлены в .env${NC}"
+    echo -e "${GREEN}  ✓ CF_Token сохранён в .env${NC}"
     echo ""
-
-    dns_plugin="dns-cloudflare"
-    dns_credentials="$cf_ini_container"
 }
 
-# ==============================================================================
-# Определить режим DNS и настроить credentials
-# ==============================================================================
 echo ""
-echo -e "${BOLD}### Определение DNS-провайдера ...${NC}"
-
-if [ -n "$cf_api_token" ] || \
-   [ "${dns_plugin:-}" = "dns-cloudflare" ] || \
-   [ -f "./certbot/secrets/cloudflare.ini" ]; then
-    echo -e "    Провайдер: ${CYAN}Cloudflare${NC}"
-    setup_cloudflare
-elif [ -n "$dns_plugin" ] && [ -n "$dns_credentials" ]; then
-    echo -e "    Провайдер: ${CYAN}$dns_plugin${NC} (из .env)"
-else
-    echo -e "    Провайдер: ${YELLOW}ручная верификация${NC}"
-    echo ""
-fi
+echo -e "${BOLD}### Проверка Cloudflare API Token ...${NC}"
+setup_cloudflare
 
 # ==============================================================================
 # Проверка существующего сертификата
@@ -169,8 +118,6 @@ cert_is_valid() {
     return 0
 }
 
-skip_dummy=false
-
 if cert_is_valid; then
     expiry=$(openssl x509 -in "$cert_path" -noout -enddate 2>/dev/null | cut -d= -f2)
     echo -e "${GREEN}✅  Действительный сертификат Let's Encrypt для $domain_name уже существует.${NC}"
@@ -180,75 +127,41 @@ if cert_is_valid; then
     decision="${decision:-Y}"
     if [[ "$decision" =~ ^[Yy]$ ]]; then
         echo ""
-        echo "### Запуск nginx с существующим сертификатом ..."
-        docker compose up --force-recreate -d nginx
-        echo ""
-        echo "### Перезагрузка конфигурации nginx ..."
-        docker compose exec nginx nginx -s reload
+        echo "### Запуск сервисов с существующим сертификатом ..."
+        docker compose up --force-recreate -d
         echo ""
         echo -e "${GREEN}✅  Готово - сертификат применён.${NC}"
         exit 0
     fi
     echo ""
     echo -e "${YELLOW}ℹ️   Принудительный перевыпуск...${NC}"
-    skip_dummy=true
 fi
 
 # ==============================================================================
 # TLS-параметры
 # ==============================================================================
-if [ ! -e "$data_path/conf/options-ssl-nginx.conf" ] || \
-   [ ! -e "$data_path/conf/ssl-dhparams.pem" ]; then
+if [ ! -e "$certs_path/options-ssl-nginx.conf" ] || \
+   [ ! -e "$certs_path/ssl-dhparams.pem" ]; then
     echo ""
     echo "### Загрузка рекомендуемых TLS-параметров ..."
-    mkdir -p "$data_path/conf"
+    mkdir -p "$certs_path"
     curl -s \
       https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf \
-      > "$data_path/conf/options-ssl-nginx.conf"
+      > "$certs_path/options-ssl-nginx.conf"
     curl -s \
       https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem \
-      > "$data_path/conf/ssl-dhparams.pem"
+      > "$certs_path/ssl-dhparams.pem"
 fi
 
-# ==============================================================================
-# Dummy сертификат
-# ==============================================================================
-if [ "$skip_dummy" = false ]; then
-    echo ""
-    echo "### Создание временного (dummy) сертификата для $domain_name ..."
-    letsencrypt_path="/etc/letsencrypt/live/$domain_name"
-    mkdir -p "$data_path/conf/live/$domain_name"
-    docker compose run --rm --entrypoint "\
-      openssl req -x509 -nodes -newkey rsa:$rsa_key_size -days 1 \
-        -keyout '$letsencrypt_path/privkey.pem' \
-        -out '$letsencrypt_path/fullchain.pem' \
-        -subj '/CN=localhost'" certbot
-    echo ""
+mkdir -p "$data_path" "$certs_path/live/$domain_name"
 
-    echo "### Запуск nginx с dummy-сертификатом ..."
-    docker compose up --force-recreate -d nginx
-    echo ""
-
-    echo "### Удаление dummy-сертификата ..."
-    docker compose run --rm --entrypoint "\
-      rm -Rf /etc/letsencrypt/live/$domain_name \
-             /etc/letsencrypt/archive/$domain_name \
-             /etc/letsencrypt/renewal/$domain_name.conf" certbot
-    echo ""
-else
-    echo ""
-    echo "### Перезапуск nginx ..."
-    docker compose up --force-recreate -d nginx
-    echo ""
+# ==============================================================================
+# Аргументы acme.sh
+# ==============================================================================
+email_arg=""
+if [ -n "$email" ]; then
+    email_arg="--accountemail $email"
 fi
-
-# ==============================================================================
-# Аргументы certbot
-# ==============================================================================
-case "$email" in
-  "") email_arg="--register-unsafely-without-email" ;;
-  *)  email_arg="-m $email" ;;
-esac
 
 staging_arg=""
 if [ "$staging" != "0" ]; then
@@ -258,49 +171,31 @@ if [ "$staging" != "0" ]; then
 fi
 
 # ==============================================================================
-# DNS challenge
+# Выпуск сертификата через DNS-01 (Cloudflare)
 # ==============================================================================
-echo "### Запрос сертификата Let's Encrypt (DNS challenge) для $domain_name ..."
+echo "### Запрос сертификата Let's Encrypt (DNS-01, Cloudflare) для $domain_name ..."
 echo ""
 
-if [ -n "$dns_plugin" ] && [ -n "$dns_credentials" ]; then
-    echo -e "    Режим: ${CYAN}автоматический плагин [$dns_plugin]${NC}"
-    echo -e "    Credentials: $dns_credentials"
-    echo -e "    Ожидание распространения DNS: ${dns_propagation}с"
-    echo ""
-    docker compose run --rm --entrypoint "\
-      certbot certonly \
-        --$dns_plugin \
-        --${dns_plugin}-credentials $dns_credentials \
-        --${dns_plugin}-propagation-seconds $dns_propagation \
-        $staging_arg \
-        $email_arg \
-        -d $domain_name \
-        --rsa-key-size $rsa_key_size \
-        --agree-tos \
-        --force-renewal \
-        --non-interactive" certbot
-else
-    echo -e "    Режим: ${YELLOW}ручная DNS верификация${NC}"
-    echo ""
-    echo -e "    Certbot попросит добавить TXT-запись:"
-    echo -e "    ${BOLD}_acme-challenge.$domain_name${NC} → <значение от certbot>"
-    echo -e "    После добавления записи нажмите ${BOLD}Enter${NC} для продолжения."
-    echo ""
-    docker compose run -it --rm --entrypoint "\
-      certbot certonly \
-        --manual \
-        --preferred-challenges dns \
-        $staging_arg \
-        $email_arg \
-        -d $domain_name \
-        --rsa-key-size $rsa_key_size \
-        --agree-tos \
-        --force-renewal" certbot
-fi
+docker compose run --rm \
+  -e CF_Token="$cf_token" \
+  -e CF_Account_ID="$cf_account_id" \
+  --entrypoint sh acme -c "
+    acme.sh --issue \
+      --dns dns_cf \
+      -d '$domain_name' \
+      -d 'www.$domain_name' \
+      $staging_arg \
+      $email_arg \
+      --home /acme.sh \
+      --force \
+    && acme.sh --install-cert -d '$domain_name' \
+      --home /acme.sh \
+      --fullchain-file /certs/live/$domain_name/fullchain.pem \
+      --key-file /certs/live/$domain_name/privkey.pem
+  "
 
 echo ""
-echo "### Перезагрузка nginx с новым сертификатом ..."
-docker compose exec nginx nginx -s reload
+echo "### Запуск сервисов ..."
+docker compose up --force-recreate -d
 echo ""
 echo -e "${GREEN}✅  Сертификат успешно выпущен и применён для $domain_name${NC}"
