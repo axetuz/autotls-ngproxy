@@ -140,8 +140,8 @@ fi
 # ==============================================================================
 # TLS-параметры
 # ==============================================================================
-if [ ! -e "$certs_path/options-ssl-nginx.conf" ] || \
-   [ ! -e "$certs_path/ssl-dhparams.pem" ]; then
+if [ ! -s "$certs_path/options-ssl-nginx.conf" ] || \
+   [ ! -s "$certs_path/ssl-dhparams.pem" ]; then
     echo ""
     echo "### Копирование рекомендуемых TLS-параметров ..."
     mkdir -p "$certs_path"
