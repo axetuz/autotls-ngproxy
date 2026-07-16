@@ -2,10 +2,8 @@
 # .env переменные:
 #   DOMAIN          - доменное имя*
 #   PROXY_PASS      - адрес upstream*
-#   CERTBOT_IMAGE   - образ certbot (по умолч.: certbot/certbot)
-#                     certbot/dns-cloudflare | certbot/dns-route53
-#                     certbot/dns-digitalocean | certbot/dns-google
-#                     certbot/dns-hetzner | certbot/dns-ovh | ...
+#   CF_Token        - Cloudflare API Token (для DNS-01 через acme.sh)
+#   CF_Account_ID   - Cloudflare Account ID (опционально, для некоторых токенов)
 # =============================================================================
 
 services:
@@ -21,7 +19,7 @@ services:
       - PROXY_PASS=${PROXY_PASS}
     volumes:
       - ./nginx/templates:/etc/nginx/templates
-      - ./certbot/conf:/etc/letsencrypt
+      - ./certs:/etc/letsencrypt:ro
     entrypoint:
       - /bin/sh
       - -c
@@ -30,18 +28,24 @@ services:
         /docker-entrypoint.sh nginx -g 'daemon off;' &
         while :; do sleep 6h & wait $${!}; nginx -s reload; done
     depends_on:
-      - certbot
+      - acme
 
-  certbot:
-    image: ${CERTBOT_IMAGE:-certbot/certbot}
+  acme:
+    image: neilpang/acme.sh
     restart: unless-stopped
+    environment:
+      - CF_Token=${CF_Token}
+      - CF_Account_ID=${CF_Account_ID}
+      - DOMAIN=${DOMAIN}
     volumes:
-      - ./certbot/conf:/etc/letsencrypt
-      - ./certbot/secrets:/secrets:ro
-    entrypoint: >-
-      /bin/sh -c
-      'trap exit TERM;
-       while :; do
-         certbot renew --quiet;
-         sleep 12h & wait $${!};
-       done'
+      - ./acme/data:/acme.sh
+      - ./certs:/certs
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        trap exit TERM
+        while :; do
+          acme.sh --cron --home /acme.sh && acme.sh --install-cert -d "$$DOMAIN" --home /acme.sh --fullchain-file /certs/live/$$DOMAIN/fullchain.pem --key-file /certs/live/$$DOMAIN/privkey.pem
+          sleep 12h & wait $${!}
+        done
