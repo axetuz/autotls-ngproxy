@@ -40,14 +40,12 @@ services:
     volumes:
       - ./acme/data:/acme.sh
       - ./certs:/certs
-    entrypoint: >-
-      /bin/sh -c
-      'trap exit TERM;
-       while :; do
-         acme.sh --cron --home /acme.sh
-         && acme.sh --install-cert -d "$$DOMAIN"
-              --home /acme.sh
-              --fullchain-file /certs/live/$$DOMAIN/fullchain.pem
-              --key-file /certs/live/$$DOMAIN/privkey.pem;
-         sleep 12h & wait $${!};
-       done'
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        trap exit TERM
+        while :; do
+          acme.sh --cron --home /acme.sh && acme.sh --install-cert -d "$$DOMAIN" --home /acme.sh --fullchain-file /certs/live/$$DOMAIN/fullchain.pem --key-file /certs/live/$$DOMAIN/privkey.pem
+          sleep 12h & wait $${!}
+        done

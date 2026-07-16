@@ -143,14 +143,10 @@ fi
 if [ ! -e "$certs_path/options-ssl-nginx.conf" ] || \
    [ ! -e "$certs_path/ssl-dhparams.pem" ]; then
     echo ""
-    echo "### Загрузка рекомендуемых TLS-параметров ..."
+    echo "### Копирование рекомендуемых TLS-параметров ..."
     mkdir -p "$certs_path"
-    curl -s \
-      https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf \
-      > "$certs_path/options-ssl-nginx.conf"
-    curl -s \
-      https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem \
-      > "$certs_path/ssl-dhparams.pem"
+    cp "$(dirname "$0")/nginx/tls/options-ssl-nginx.conf" "$certs_path/options-ssl-nginx.conf"
+    cp "$(dirname "$0")/nginx/tls/ssl-dhparams.pem" "$certs_path/ssl-dhparams.pem"
 fi
 
 mkdir -p "$data_path" "$certs_path/live/$domain_name"
